@@ -5,20 +5,28 @@ import plotly.express as px
 
 from ui import inject, kpi
 from shop_mapping import SHOP_OPTIONS
+
+# --- Import utils + optionele hourly helpers -------------------
 from utils_pfmx import (
     fetch_live_locations,
     fetch_report,
-    fetch_report_hourly,                 # requires the hourly helper added earlier
     normalize_report_days_to_df,
-    normalize_report_hourly_to_df,       # requires the hourly normalizer added earlier
 )
 
+# Hourly (optioneel; laat de app niet crashen als deze ontbreekt)
+try:
+    from utils_pfmx import fetch_report_hourly, normalize_report_hourly_to_df
+    HAS_HOURLY = True
+except Exception:
+    HAS_HOURLY = False
+
+# ----------------------------------------------------------------
 st.set_page_config(page_title="Store Live Ops", layout="wide")
 inject()
 
 st.title("Store Live Ops")
 
-# --- Controls -----------------------------------------------------------------
+# --- Controls ---------------------------------------------------
 top1, top2, top3, top4 = st.columns([2, 1.2, 1.2, 1.6])
 with top1:
     store_label = st.selectbox("Store", list(SHOP_OPTIONS.keys()))
@@ -32,22 +40,17 @@ with top3:
 with top4:
     spv_target = st.slider("SPV target (€)", 0, 200, 30, 1)
 
-# Periode selectors (alleen voor Dag/Uur)
-per_col1, per_col2, per_col3 = st.columns([1.2, 1.2, 2])
-period = None
-date_from = None
-date_to = None
+# Periode (alleen Dag/Uur)
+period, date_from, date_to = None, None, None
 if mode in ("Dag", "Uur"):
-    with per_col1:
+    per1, per2 = st.columns([1.3, 2])
+    with per1:
         period = st.selectbox(
             "Periode",
             ["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "date"],
             index=4 if mode == "Dag" else 3,
         )
-    with per_col2:
-        # optioneel group_by etc. (bewust minimal)
-        pass
-    with per_col3:
+    with per2:
         if period == "date":
             d1, d2 = st.columns(2)
             with d1:
@@ -57,7 +60,7 @@ if mode in ("Dag", "Uur"):
 
 st.divider()
 
-# --- Helper formatters ---------------------------------------------------------
+# --- Helpers ----------------------------------------------------
 def eur(v, decimals=0):
     try:
         fmt = f"€{{:,.{decimals}f}}".format(float(v))
@@ -65,32 +68,31 @@ def eur(v, decimals=0):
     except Exception:
         return v
 
-def pct(v, decimals=1):
-    try:
-        return f"{float(v):,.{decimals}f}%".format(v).replace(",", "@").replace(".", ",").replace("@",".")
-    except Exception:
-        return v
-
 def conv_to_pct(x):
-    # accepteert 0.23 of 23 → maakt er % van
     try:
         x = float(x)
         return x * 100 if x <= 1 else x
     except Exception:
         return 0.0
 
-# --- Render per modus ----------------------------------------------------------
+def pct(v, decimals=1):
+    try:
+        return f"{float(v):,.{decimals}f}%".replace(",", "@").replace(".", ",").replace("@",".")
+    except Exception:
+        return v
+
+# --- RENDER -----------------------------------------------------
 if mode == "Live":
     st.subheader("Live bezetting (occupancy)")
     try:
-        payload = fetch_live_locations(shop_ids=[shop_id])  # POST naar /live-inside, source=locations
-        # payload kan variëren; probeer te tonen zoals binnenkomt
+        payload = fetch_live_locations(shop_ids=[shop_id])  # POST /live-inside, source=locations
+        # payload kan dict of list zijn; normaliseer licht
         if isinstance(payload, dict) and "data" in payload:
             data = payload["data"]
-            if isinstance(data, dict):
-                df = pd.DataFrame.from_dict(data, orient="index").reset_index().rename(columns={"index":"shop_id"})
-            else:
-                df = pd.DataFrame(data)
+            df = (
+                pd.DataFrame.from_dict(data, orient="index").reset_index().rename(columns={"index": "shop_id"})
+                if isinstance(data, dict) else pd.DataFrame(data)
+            )
         elif isinstance(payload, dict):
             df = pd.DataFrame([payload])
         else:
@@ -98,9 +100,10 @@ if mode == "Live":
 
         if not df.empty and "shop_id" in df.columns:
             df["shop_id"] = pd.to_numeric(df["shop_id"], errors="coerce").astype("Int64")
+
         st.dataframe(df, use_container_width=True)
 
-        # compacte KPI weergave indien kolommen bestaan
+        # KPI‑teasers (alleen tonen als kolommen bestaan)
         cols = st.columns(4)
         if "occupancy" in df.columns:
             with cols[0]: kpi("Occupancy", f"{int(df['occupancy'].iloc[0])}" if pd.notna(df['occupancy'].iloc[0]) else "-", "neutral")
@@ -131,8 +134,9 @@ elif mode == "Dag":
                 kwargs["date_from"] = date_from
                 kwargs["date_to"] = date_to
 
-        payload = fetch_report(**kwargs)  # POST naar /get-report
+        payload = fetch_report(**kwargs)  # POST /get-report
         df = normalize_report_days_to_df(payload)
+
         if df.empty:
             st.warning("Geen dagdata gevonden.")
         else:
@@ -140,9 +144,9 @@ elif mode == "Dag":
 
             latest = df.iloc[-1]
             conv = conv_to_pct(latest.get("conversion_rate", 0))
-            spv = float(latest.get("sales_per_visitor", 0) or 0)
-            tnr = float(latest.get("turnover", 0) or 0)
-            cnt = int(latest.get("count_in", 0) or 0)
+            spv  = float(latest.get("sales_per_visitor", 0) or 0)
+            tnr  = float(latest.get("turnover", 0) or 0)
+            cnt  = int(latest.get("count_in", 0) or 0)
 
             c1, c2, c3, c4 = st.columns(4)
             with c1: kpi("Conversie", pct(conv, 1), "good" if conv >= conv_target else "bad")
@@ -150,7 +154,6 @@ elif mode == "Dag":
             with c3: kpi("Bezoekers", f"{cnt:,}".replace(",", "."), "neutral")
             with c4: kpi("Omzet", eur(tnr, 0), "neutral")
 
-            # Kleine trendplot
             plot_df = df.copy()
             plot_df["conv_pct"] = plot_df["conversion_rate"].apply(conv_to_pct)
             fig = px.line(plot_df, x="date", y=["sales_per_visitor", "conv_pct"], title="Trend: SPV en Conversie (%)")
@@ -161,62 +164,58 @@ elif mode == "Dag":
 
 elif mode == "Uur":
     st.subheader("Uur KPI’s")
-    try:
-        kwargs = dict(
-            data=[shop_id],
-            data_output=["turnover", "conversion_rate", "sales_per_visitor", "count_in"],
-            source="shops",
-            period=period,  # bv. last_week
-        )
-        if period == "date":
-            if not date_from or not date_to:
-                st.warning("Vul date_from en date_to in (YYYY-MM-DD).")
+    if not HAS_HOURLY:
+        st.warning("Hourly helpers ontbreken in utils_pfmx.py. Voeg toe: fetch_report_hourly() en normalize_report_hourly_to_df().")
+    else:
+        try:
+            kwargs = dict(
+                data=[shop_id],
+                data_output=["turnover", "conversion_rate", "sales_per_visitor", "count_in"],
+                source="shops",
+                period=period,  # bijv. last_week
+            )
+            if period == "date":
+                if not date_from or not date_to:
+                    st.warning("Vul date_from en date_to in (YYYY-MM-DD).")
+                else:
+                    kwargs["date_from"] = date_from
+                    kwargs["date_to"] = date_to
+
+            payload = fetch_report_hourly(**kwargs)  # POST met period_step="hour"
+            hdf = normalize_report_hourly_to_df(payload)
+
+            if hdf.empty:
+                st.warning("Geen hourly data gevonden.")
             else:
-                kwargs["date_from"] = date_from
-                kwargs["date_to"] = date_to
+                st.dataframe(hdf, use_container_width=True)
 
-        payload = fetch_report_hourly(**kwargs)  # POST met period_step="hour"
-        hdf = normalize_report_hourly_to_df(payload)
-        if hdf.empty:
-            st.warning("Geen hourly data gevonden.")
-        else:
-            # Toon tabel
-            st.dataframe(hdf, use_container_width=True)
+                plot_df = hdf.copy()
+                if "conversion_rate" in plot_df.columns:
+                    plot_df["conv_pct"] = plot_df["conversion_rate"].apply(conv_to_pct)
+                if "timestamp" in plot_df.columns:
+                    plot_df["x"] = plot_df["date"].astype(str) + " " + plot_df["timestamp"].astype(str)
+                else:
+                    plot_df["x"] = plot_df["date"].astype(str)
 
-            # Conversie% en SPV per uur plot
-            plot_df = hdf.copy()
-            if "conversion_rate" in plot_df.columns:
-                plot_df["conv_pct"] = plot_df["conversion_rate"].apply(conv_to_pct)
-            # Combineer date + timestamp voor x-as (als aanwezig)
-            if "timestamp" in plot_df.columns:
-                plot_df["x"] = plot_df["date"].astype(str) + " " + plot_df["timestamp"].astype(str)
-            else:
-                plot_df["x"] = plot_df["date"].astype(str)
+                tcol1, tcol2 = st.columns(2)
+                with tcol1:
+                    fig1 = px.line(plot_df, x="x", y="sales_per_visitor", title="SPV per uur")
+                    fig1.add_hline(y=spv_target, line_dash="dot")
+                    st.plotly_chart(fig1, use_container_width=True)
+                with tcol2:
+                    fig2 = px.line(plot_df, x="x", y="conv_pct", title="Conversie (%) per uur")
+                    st.plotly_chart(fig2, use_container_width=True)
 
-            tcol1, tcol2 = st.columns(2)
-            with tcol1:
-                fig1 = px.line(plot_df, x="x", y="sales_per_visitor", title="SPV per uur")
-                fig1.add_hline(y=spv_target, line_dash="dot")
-                st.plotly_chart(fig1, use_container_width=True)
-            with tcol2:
-                fig2 = px.line(plot_df, x="x", y="conv_pct", title="Conversie (%) per uur")
-                fig2.add_vline(x=None)  # no-op; enkel placeholder als je markers wilt
-                st.plotly_chart(fig2, use_container_width=True)
+                latest = plot_df.iloc[-1]
+                conv = float(latest.get("conv_pct", 0))
+                spv  = float(latest.get("sales_per_visitor", 0) or 0)
+                tnr  = float(latest.get("turnover", 0) or 0)
+                cnt  = int(latest.get("count_in", 0) or 0)
 
-            # Laatste uur → KPI cards vs targets (indien bruikbaar)
-            latest = plot_df.iloc[-1]
-            conv = float(latest.get("conv_pct", 0))
-            spv = float(latest.get("sales_per_visitor", 0) or 0)
-            tnr = float(latest.get("turnover", 0) or 0)
-            cnt = int(latest.get("count_in", 0) or 0)
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: kpi("Conversie (laatste uur)", pct(conv, 1), "good" if conv >= conv_target else "bad")
-            with c2: kpi("SPV (laatste uur)", eur(spv, 2), "good" if spv >= spv_target else "bad")
-            with c3: kpi("Bezoekers (uur)", f"{cnt:,}".replace(",", "."), "neutral")
-            with c4: kpi("Omzet (uur)", eur(tnr, 0), "neutral")
+                c1, c2, c3, c4 = st.columns(4)
+                with c1: kpi("Conversie (laatste uur)", pct(conv, 1), "good" if conv >= conv_target else "bad")
+                with c2: kpi("SPV (laatste uur)", eur(spv, 2), "good" if spv >= spv_target else "bad")
+                with c3: kpi("Bezoekers (uur)", f"{cnt:,}".replace(",", "."), "neutral")
+                with c4: kpi("Omzet (uur)", eur(tnr, 0), "neutral")
 
-    except Exception as e:
-        st.error(f"Hourly call failed: {e}")
-
-# Hint onderaan
-st.caption("Alle API-calls zijn POST met herhaalde keys zonder [] voor data & data_output; live = /live-inside (source=locations), report = /get-report (source=shops).")
+st.caption("POST + herhaalde keys (zonder []) | Live = /live-inside (source=locations) | Report = /get-report (source=shops)")
