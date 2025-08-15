@@ -3,6 +3,7 @@ import logging
 from typing import List, Optional, Dict, Any, Tuple, Union
 import requests
 import pandas as pd
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("pfm.utils")
 if not logger.handlers:
@@ -11,6 +12,16 @@ if not logger.handlers:
     handler.setFormatter(fmt)
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
+
+# Helper: derive https://host/live-inside from API_URL secret
+def _derive_live_url_from_api() -> str:
+    if not API_URL:
+        raise RuntimeError("API_URL ontbreekt in secrets.")
+    p = urlsplit(API_URL.strip())
+    if not p.scheme or not p.netloc:
+        raise RuntimeError(f"API_URL lijkt ongeldig: {API_URL!r}")
+    base = f"{p.scheme}://{p.netloc}".rstrip("/")
+    return base + "/live-inside"
 
 def _get_secret(key: str, default: Optional[str] = None) -> Optional[str]:
     try:
@@ -102,20 +113,14 @@ def fetch_live_locations(
     extra: Optional[Dict[str, Union[str, int, float]]] = None
 ) -> Dict[str, Any]:
     """
-    Live bezetting: POST naar {BASE_URL zonder '/get-report'}/live-inside
-    Form-data met herhaalde 'data' keys (zonder []) en source=locations
+    Live bezetting: POST naar {scheme}://{host}/live-inside (afgeleid van API_URL secret).
+    Form-encoded body met herhaalde 'data' keys (zonder []) en source=locations.
     """
-    if not API_URL:
-        raise RuntimeError("API_URL ontbreekt in secrets.")
-
-    # Base URL aanpassen: '/get-report' vervangen door '/live-inside'
-    if API_URL.endswith("/get-report"):
-        url = API_URL.replace("/get-report", "/live-inside")
-    else:
-        url = API_URL.rstrip("/") + "/live-inside"
+    url = _derive_live_url_from_api()  # <— altijd host + /live-inside
+    logger.info("Live URL resolved to: %s", url)
 
     base_params: Dict[str, Union[str, int, float, List, None]] = {
-        "source": source,
+        "source": source,   # 'locations'
         "data": shop_ids
     }
     if extra:
