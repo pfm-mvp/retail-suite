@@ -21,6 +21,17 @@ st.set_page_config(page_title="Store Live Ops", layout="wide")
 
 st.title("Store Live Ops")
 
+# Debug: toon afgeleide live-URL uit secrets
+try:
+    from urllib.parse import urlsplit
+    api = st.secrets.get("API_URL", "")
+    if api:
+        p = urlsplit(api.strip())
+        live_url_dbg = f"{p.scheme}://{p.netloc}/live-inside"
+        st.caption(f"Live endpoint: {live_url_dbg}")
+except Exception:
+    pass
+
 # -------------------- Controls --------------------
 c1, c2, c3, c4 = st.columns([2, 1.2, 1.2, 1.6])
 with c1:
