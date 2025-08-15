@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from shop_mapping import SHOP_OPTIONS
+from shop_mapping import SHOP_NAME_TO_ID, SHOP_ID_TO_NAME
 from utils_pfmx import fetch_live_locations, fetch_report, normalize_report_days_to_df
 
 # Hourly helpers zijn optioneel; app blijft werken als ze ontbreken
@@ -20,8 +20,8 @@ st.title("Store Live Ops")
 # -------------------- Controls --------------------
 c1, c2, c3, c4 = st.columns([2, 1.2, 1.2, 1.6])
 with c1:
-    store_label = st.selectbox("Store", list(SHOP_OPTIONS.keys()))
-    shop_id = SHOP_OPTIONS[store_label]
+    store_label = st.selectbox("Store", list(SHOP_NAME_TO_ID.keys()))
+    shop_id = SHOP_NAME_TO_ID[store_label]
 with c2:
     mode = st.radio("Modus", ["Live", "Dag", "Uur"], horizontal=True)
 with c3:
