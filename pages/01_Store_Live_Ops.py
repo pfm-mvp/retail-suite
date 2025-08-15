@@ -1,8 +1,12 @@
 # pages/01_Store_Live_Ops.py
+import sys
+import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+#Zorg dat de main map in sys.path staat
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from shop_mapping import SHOP_NAME_TO_ID, SHOP_ID_TO_NAME
 from utils_pfmx import fetch_live_locations, fetch_report, normalize_report_days_to_df
 
