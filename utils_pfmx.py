@@ -102,48 +102,28 @@ def fetch_live_locations(
     extra: Optional[Dict[str, Union[str, int, float]]] = None
 ) -> Dict[str, Any]:
     """
-    Live bezetting: POST met form-encoded body (herhaalde keys zonder []).
-    Probeert in volgorde:
-      1) LIVE_URL (als gezet in secrets)
-      2) {API_URL base}/live-inside
-      3) {API_URL base}/report/live-inside
+    Live bezetting: POST naar {BASE_URL zonder '/get-report'}/live-inside
+    Form-data met herhaalde 'data' keys (zonder []) en source=locations
     """
-    # 1) expliciet LIVE_URL
-    candidates: List[str] = []
-    if LIVE_URL:
-        candidates.append(LIVE_URL.rstrip("/"))
+    if not API_URL:
+        raise RuntimeError("API_URL ontbreekt in secrets.")
 
-    # 2) en 3) afleiden van API_URL
-    if API_URL:
-        root = API_URL.rstrip("/")
-        if root.endswith("/get-report"):
-            root = root[: -len("/get-report")]
-        candidates.append(root + "/live-inside")
-        candidates.append(root + "/report/live-inside")
-
-    if not candidates:
-        raise RuntimeError("Geen LIVE endpoint bekend. Zet LIVE_URL in secrets of geef API_URL op.")
+    # Base URL aanpassen: '/get-report' vervangen door '/live-inside'
+    if API_URL.endswith("/get-report"):
+        url = API_URL.replace("/get-report", "/live-inside")
+    else:
+        url = API_URL.rstrip("/") + "/live-inside"
 
     base_params: Dict[str, Union[str, int, float, List, None]] = {
-        "source": source,   # 'locations'
+        "source": source,
         "data": shop_ids
     }
     if extra:
         base_params.update(extra)
 
     params_tuples = _flatten_params(base_params)
-
-    last_err = None
-    for url in candidates:
-        try:
-            resp = _safe_post(url, params_tuples)  # POST, x-www-form-urlencoded
-            return resp.json()
-        except requests.HTTPError as e:
-            # 404? probeer volgende candidate
-            last_err = e
-            continue
-    # alle candidates faalden
-    raise last_err if last_err else RuntimeError("Live call faalde op alle kandidaten.")
+    resp = _safe_post(url, params_tuples)  # POST met x-www-form-urlencoded
+    return resp.json()
 
 def normalize_report_days_to_df(payload: Dict[str, Any]) -> pd.DataFrame:
     rows = []
