@@ -101,24 +101,49 @@ def fetch_live_locations(
     source: str = "locations",
     extra: Optional[Dict[str, Union[str, int, float]]] = None
 ) -> Dict[str, Any]:
+    """
+    Live bezetting: POST met form-encoded body (herhaalde keys zonder []).
+    Probeert in volgorde:
+      1) LIVE_URL (als gezet in secrets)
+      2) {API_URL base}/live-inside
+      3) {API_URL base}/report/live-inside
+    """
+    # 1) expliciet LIVE_URL
+    candidates: List[str] = []
     if LIVE_URL:
-        url = LIVE_URL
-    else:
-        if not API_URL:
-            raise RuntimeError("API_URL ontbreekt voor afleiding LIVE_URL.")
-        root = API_URL
+        candidates.append(LIVE_URL.rstrip("/"))
+
+    # 2) en 3) afleiden van API_URL
+    if API_URL:
+        root = API_URL.rstrip("/")
         if root.endswith("/get-report"):
             root = root[: -len("/get-report")]
-        url = root.rstrip("/") + "/live-inside"   # no '/report'
+        candidates.append(root + "/live-inside")
+        candidates.append(root + "/report/live-inside")
+
+    if not candidates:
+        raise RuntimeError("Geen LIVE endpoint bekend. Zet LIVE_URL in secrets of geef API_URL op.")
+
     base_params: Dict[str, Union[str, int, float, List, None]] = {
         "source": source,   # 'locations'
         "data": shop_ids
     }
     if extra:
         base_params.update(extra)
+
     params_tuples = _flatten_params(base_params)
-    resp = _safe_post(url, params_tuples)
-    return resp.json()
+
+    last_err = None
+    for url in candidates:
+        try:
+            resp = _safe_post(url, params_tuples)  # POST, x-www-form-urlencoded
+            return resp.json()
+        except requests.HTTPError as e:
+            # 404? probeer volgende candidate
+            last_err = e
+            continue
+    # alle candidates faalden
+    raise last_err if last_err else RuntimeError("Live call faalde op alle kandidaten.")
 
 def normalize_report_days_to_df(payload: Dict[str, Any]) -> pd.DataFrame:
     rows = []
